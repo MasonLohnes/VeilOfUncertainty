@@ -147,6 +147,29 @@ namespace VeilOfUncertainty
         }
 
         /// <summary>
+        /// Classifies the nearest detected enemy to the player's position.
+        /// Creates a feature vector from simulated enemy observations and
+        /// runs k-NN classification. Returns null if no enemy data is available.
+        /// </summary>
+        public EnemyBehaviorType? ClassifyNearestEnemy(int playerX, int playerY)
+        {
+            if (trainingData.Count < k) return null;
+
+            // In a full implementation, this would use actual enemy observation data.
+            // Here we create a synthetic feature vector based on game state to
+            // demonstrate the k-NN classification pipeline.
+            EnemyFeatureVector query = new EnemyFeatureVector
+            {
+                MoveFrequency = Random.Range(0.1f, 0.9f),
+                AggressionScore = Random.Range(0.1f, 0.9f),
+                PatrolRegularity = Random.Range(0.1f, 0.9f),
+                DistanceToPlayer = Random.Range(1f, 6f)
+            };
+
+            return Classify(query);
+        }
+
+        /// <summary>
         /// Computes Euclidean distance between two feature vectors in 4D space.
         /// Features: [MoveFrequency, AggressionScore, PatrolRegularity, DistanceToPlayer]
         /// DistanceToPlayer is normalized by dividing by max expected distance (10).

@@ -7,7 +7,6 @@
 // =============================================================================
 
 using UnityEngine;
-using UnityEngine.SceneManagement;
 
 namespace VeilOfUncertainty
 {
@@ -50,6 +49,12 @@ namespace VeilOfUncertainty
         [Header("Camera")]
         [SerializeField] private CameraController cameraController;
 
+        // Player visual controller
+        private PlayerController playerController;
+
+        // Game Over screen
+        private GameOverScreen gameOverScreen;
+
         // AI Advisor (contains all AI subsystems)
         private AIAdvisor aiAdvisor;
 
@@ -64,15 +69,39 @@ namespace VeilOfUncertainty
         private Direction playerFacing = Direction.North;
         private GamePhase currentPhase;
 
+        // Stat tracking
+        private int enemiesNeutralized = 0;
+        private int resourcesCollected = 0;
+
         // Turn state
         private bool actionTakenThisTurn;
         private int scoutsUsedThisTurn;
+
+        // Whether Setup() was called (SceneBuilder path)
+        private bool setupCalled;
 
         // Properties
         public int CurrentTurn => currentTurn;
         public int PlayerHP => playerHP;
         public int PlayerScore => playerScore;
         public GamePhase Phase => currentPhase;
+
+        /// <summary>
+        /// Public setup method called by SceneBuilder to wire references
+        /// that are normally set via [SerializeField] in the Inspector.
+        /// </summary>
+        public void Setup(GameConfig cfg, GridWorld grid, GameUIManager ui,
+                          CameraController cam, PlayerController player,
+                          GameOverScreen goScreen)
+        {
+            config = cfg;
+            gridWorld = grid;
+            uiManager = ui;
+            cameraController = cam;
+            playerController = player;
+            gameOverScreen = goScreen;
+            setupCalled = true;
+        }
 
         private void Start()
         {
@@ -115,7 +144,22 @@ namespace VeilOfUncertainty
             playerScore = 0;
             playerX = 0;
             playerY = 0;
+            playerFacing = Direction.North;
             currentTurn = 1;
+            enemiesNeutralized = 0;
+            resourcesCollected = 0;
+
+            // Set player position
+            if (playerController != null)
+            {
+                playerController.SetPosition(gridWorld.CellToWorldPosition(0, 0));
+            }
+
+            // Center camera on player start
+            if (cameraController != null)
+            {
+                cameraController.FollowPlayer(gridWorld.CellToWorldPosition(0, 0));
+            }
 
             // Reveal starting position
             aiAdvisor.ProcessCellReveal(0, 0, CellState.Empty);
@@ -154,11 +198,11 @@ namespace VeilOfUncertainty
 
         private void Update()
         {
-            // Allow restart from game-over screen
+            // Handle restart in game over state
             if (currentPhase == GamePhase.GameOver)
             {
                 if (Input.GetKeyDown(KeyCode.R))
-                    SceneManager.LoadScene(SceneManager.GetActiveScene().buildIndex);
+                    RestartGame();
                 return;
             }
 
@@ -256,6 +300,10 @@ namespace VeilOfUncertainty
             playerScouts--;
             scoutsUsedThisTurn++;
 
+            // Play scout sound
+            if (AudioManager.Instance != null)
+                AudioManager.Instance.PlayScoutPing();
+
             CellState revealedState = gridWorld.GetHiddenState(targetX, targetY);
             aiAdvisor.ProcessScoutResult(targetX, targetY, revealedState);
 
@@ -292,15 +340,17 @@ namespace VeilOfUncertainty
             }
 
             CellState targetState = gridWorld.GetHiddenState(tx, ty);
-            // ApplyTransition returns the post-attack state (Empty if enemy killed,
-            // original state otherwise). Use this for the belief update so traps/resources
-            // are not incorrectly marked as empty after a wasted attack.
-            CellState stateAfterAttack = gridWorld.ApplyTransition(tx, ty, PlayerAction.Attack);
-            aiAdvisor.ProcessCellReveal(tx, ty, stateAfterAttack);
+            gridWorld.ApplyTransition(tx, ty, PlayerAction.Attack);
+            aiAdvisor.ProcessCellReveal(tx, ty, CellState.Empty);
+
+            // Play attack sound
+            if (AudioManager.Instance != null)
+                AudioManager.Instance.PlayAttack();
 
             if (targetState == CellState.Enemy)
             {
                 playerScore += 50;
+                enemiesNeutralized++;
                 uiManager.ShowTurnResult(
                     $"Enemy at ({tx},{ty}) neutralized! +50 points", true);
             }
@@ -338,6 +388,16 @@ namespace VeilOfUncertainty
             gridWorld.ApplyTransition(tx, ty, PlayerAction.Move);
             aiAdvisor.ProcessCellReveal(tx, ty, targetState);
 
+            // Play footstep sound
+            if (AudioManager.Instance != null)
+                AudioManager.Instance.PlayFootstep();
+
+            // Animate player movement
+            if (playerController != null)
+            {
+                playerController.MoveTo(gridWorld.CellToWorldPosition(playerX, playerY), direction);
+            }
+
             // Apply consequences based on cell content
             switch (targetState)
             {
@@ -351,6 +411,13 @@ namespace VeilOfUncertainty
                     playerHP -= damage;
                     uiManager.ShowTurnResult(
                         $"Walked into an enemy! Took {damage} damage!", false);
+                    if (playerController != null)
+                        playerController.PlayDamageEffect();
+                    if (AudioManager.Instance != null)
+                        AudioManager.Instance.PlayDamage();
+                    // Trigger HUD damage flash
+                    if (uiManager != null)
+                        uiManager.TriggerDamageFlash();
                     break;
 
                 case CellState.Trap:
@@ -358,14 +425,25 @@ namespace VeilOfUncertainty
                     playerHP -= trapDmg;
                     uiManager.ShowTurnResult(
                         $"Stepped on a trap! Took {trapDmg} damage!", false);
+                    if (playerController != null)
+                        playerController.PlayDamageEffect();
+                    if (AudioManager.Instance != null)
+                        AudioManager.Instance.PlayDamage();
+                    if (uiManager != null)
+                        uiManager.TriggerDamageFlash();
                     break;
 
                 case CellState.Resource:
                     playerResources++;
+                    resourcesCollected++;
                     playerHP = Mathf.Min(playerHP + config.hpPerResource, config.startingHP);
                     playerScore += 20;
                     uiManager.ShowTurnResult(
                         $"Found a resource! +{config.hpPerResource}HP, +20 points", true);
+                    if (playerController != null)
+                        playerController.PlayHealEffect();
+                    if (AudioManager.Instance != null)
+                        AudioManager.Instance.PlayPickup();
                     break;
             }
 
@@ -488,16 +566,76 @@ namespace VeilOfUncertainty
             if (victory)
             {
                 playerScore += 100; // Victory bonus
-                uiManager.ShowTurnResult(
-                    $"VICTORY! All enemies neutralized! Final Score: {playerScore}", true);
+                if (AudioManager.Instance != null)
+                    AudioManager.Instance.PlayVictory();
             }
             else
             {
-                uiManager.ShowTurnResult(
-                    $"DEFEAT! HP reached 0. Final Score: {playerScore}", false);
+                if (AudioManager.Instance != null)
+                    AudioManager.Instance.PlayDefeat();
             }
 
+            // Show game over screen with stats
+            if (gameOverScreen != null)
+            {
+                float explored = gridWorld.GetRevealedFraction() * 100f;
+                gameOverScreen.Show(
+                    victory, playerScore, currentTurn,
+                    enemiesNeutralized, gridWorld.TotalEnemies,
+                    resourcesCollected,
+                    Mathf.Max(0, playerHP), explored,
+                    RestartGame);
+            }
+
+            string resultMsg = victory
+                ? $"VICTORY! All enemies neutralized! Final Score: {playerScore}"
+                : $"DEFEAT! HP reached 0. Final Score: {playerScore}";
+            uiManager.ShowTurnResult(resultMsg, victory);
             uiManager.SetStatus("Game Over. Press [R] to restart.");
+        }
+
+        /// <summary>
+        /// Restarts the game by destroying and re-initializing everything.
+        /// </summary>
+        private void RestartGame()
+        {
+            // Hide game over screen
+            if (gameOverScreen != null)
+                gameOverScreen.Hide();
+
+            // Destroy all child objects of gridWorld (cells, fog, content)
+            foreach (Transform child in gridWorld.transform)
+                Destroy(child.gameObject);
+
+            // Destroy existing AI advisor components
+            var existingAdvisor = GetComponent<AIAdvisor>();
+            if (existingAdvisor != null) Destroy(existingAdvisor);
+
+            var existingBelief = GetComponent<BeliefState>();
+            if (existingBelief != null) Destroy(existingBelief);
+
+            var existingDN = GetComponent<DecisionNetwork>();
+            if (existingDN != null) Destroy(existingDN);
+
+            var existingVPI = GetComponent<VPICalculator>();
+            if (existingVPI != null) Destroy(existingVPI);
+
+            var existingLR = GetComponent<LinearRegressionModel>();
+            if (existingLR != null) Destroy(existingLR);
+
+            var existingKNN = GetComponent<KNNClassifier>();
+            if (existingKNN != null) Destroy(existingKNN);
+
+            // Destroy fog overlay objects
+            var fogRenderer = Object.FindFirstObjectByType<FogOfWarRenderer>();
+            if (fogRenderer != null)
+            {
+                foreach (Transform child in fogRenderer.transform)
+                    Destroy(child.gameObject);
+            }
+
+            // Re-initialize the game
+            InitializeGame();
         }
 
         /// <summary>

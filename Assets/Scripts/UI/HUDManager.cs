@@ -13,6 +13,7 @@ namespace VeilOfUncertainty
     /// <summary>
     /// HUDManager controls the bottom HUD bar and advisor recommendation display.
     /// Uses Unity IMGUI so no external UI packages are required.
+    /// Also renders a damage flash overlay when the player takes damage.
     /// </summary>
     public class HUDManager : MonoBehaviour
     {
@@ -34,6 +35,9 @@ namespace VeilOfUncertainty
         private Color advisorColor = Color.white;
         private string advisorExplanation = "";
         private float displayDifficulty = 1.0f;
+
+        // Damage flash
+        private float damageFlashAlpha = 0f;
 
         private GUIStyle boxStyle;
         private GUIStyle statStyle;
@@ -90,6 +94,23 @@ namespace VeilOfUncertainty
             statusColor = isPositive ? new Color(0.3f, 1f, 0.3f) : new Color(1f, 0.3f, 0.3f);
         }
 
+        /// <summary>
+        /// Triggers a red damage flash overlay effect.
+        /// </summary>
+        public void TriggerDamageFlash()
+        {
+            damageFlashAlpha = 0.3f;
+        }
+
+        private void Update()
+        {
+            // Decay damage flash
+            if (damageFlashAlpha > 0f)
+            {
+                damageFlashAlpha = Mathf.Max(0f, damageFlashAlpha - Time.deltaTime * 2f);
+            }
+        }
+
         private void InitStyles()
         {
             if (stylesInitialized) return;
@@ -120,6 +141,13 @@ namespace VeilOfUncertainty
         private void OnGUI()
         {
             InitStyles();
+
+            // Damage flash overlay
+            if (damageFlashAlpha > 0.01f)
+            {
+                Texture2D flashTex = MakeTex(2, 2, new Color(1f, 0f, 0f, damageFlashAlpha));
+                GUI.DrawTexture(new Rect(0, 0, Screen.width, Screen.height), flashTex);
+            }
 
             float hudH = 110f;
             float hudW = Screen.width;

@@ -67,14 +67,12 @@ namespace VeilOfUncertainty
         [SerializeField] private GameObject enemyPrefab;
         [SerializeField] private GameObject trapPrefab;
         [SerializeField] private GameObject resourcePrefab;
-        // fogPrefab removed — fog-of-war is handled entirely by FogOfWarRenderer.
+        [SerializeField] private GameObject fogPrefab;
 
         // Internal state
         private GridCell[,] grid;
         private GameObject[,] cellObjects;
-        // Note: fog-of-war visibility is managed entirely by FogOfWarRenderer.
-        // GridWorld does not maintain a separate fog-object array to avoid
-        // double-layered fog when both systems are active.
+        private GameObject[,] fogObjects;
         private int totalEnemies;
         private int totalResources;
         private int enemiesRemaining;
@@ -91,6 +89,19 @@ namespace VeilOfUncertainty
         public float ResourceFalsePositiveRate => resourceFalsePositiveRate;
 
         /// <summary>
+        /// Sets prefab references programmatically (called by SceneBuilder).
+        /// </summary>
+        public void SetPrefabs(GameObject cell, GameObject fog, GameObject enemy,
+                               GameObject trap, GameObject resource)
+        {
+            cellPrefab = cell;
+            fogPrefab = fog;
+            enemyPrefab = enemy;
+            trapPrefab = trap;
+            resourcePrefab = resource;
+        }
+
+        /// <summary>
         /// Initializes and procedurally generates the grid world.
         /// </summary>
         public void Initialize(int? seed = null)
@@ -100,6 +111,7 @@ namespace VeilOfUncertainty
 
             grid = new GridCell[gridWidth, gridHeight];
             cellObjects = new GameObject[gridWidth, gridHeight];
+            fogObjects = new GameObject[gridWidth, gridHeight];
             totalEnemies = 0;
             totalResources = 0;
 
@@ -148,6 +160,7 @@ namespace VeilOfUncertainty
 
         /// <summary>
         /// Instantiates 3D cell visuals and fog-of-war overlays.
+        /// Uses a checkerboard pattern for visual clarity.
         /// </summary>
         private void SpawnVisuals()
         {
@@ -162,8 +175,29 @@ namespace VeilOfUncertainty
                     {
                         cellObjects[x, y] = Instantiate(cellPrefab, position, Quaternion.identity, transform);
                         cellObjects[x, y].name = $"Cell_{x}_{y}";
+                        cellObjects[x, y].SetActive(true);
+
+                        // Checkerboard coloring
+                        var renderer = cellObjects[x, y].GetComponent<Renderer>();
+                        if (renderer != null)
+                        {
+                            bool isDark = (x + y) % 2 == 0;
+                            Color cellColor = isDark
+                                ? new Color(0.65f, 0.65f, 0.68f)
+                                : new Color(0.78f, 0.78f, 0.82f);
+                            renderer.material.color = cellColor;
+                        }
                     }
-                    // Fog overlays are created and managed by FogOfWarRenderer.
+
+                    // Spawn fog overlay (hidden initially for revealed cells)
+                    if (fogPrefab != null)
+                    {
+                        Vector3 fogPos = position + Vector3.up * 0.1f;
+                        fogObjects[x, y] = Instantiate(fogPrefab, fogPos,
+                            Quaternion.Euler(90f, 0f, 0f), transform);
+                        fogObjects[x, y].name = $"Fog_{x}_{y}";
+                        fogObjects[x, y].SetActive(!grid[x, y].IsRevealed);
+                    }
                 }
             }
         }
@@ -296,7 +330,7 @@ namespace VeilOfUncertainty
 
         /// <summary>
         /// Reveals a cell (called when the player moves onto it or scouts it).
-        /// Updates the fog-of-war visual.
+        /// Updates the fog-of-war visual and tints the cell based on content.
         /// </summary>
         public void RevealCell(int x, int y, bool fullReveal = true)
         {
@@ -312,10 +346,57 @@ namespace VeilOfUncertainty
                 grid[x, y].IsPartiallyRevealed = true;
             }
 
-            // Fog visibility is handled by FogOfWarRenderer which polls IsRevealed
-            // and IsPartiallyRevealed each frame — no additional fog update needed here.
+            // Update fog visual
+            if (fogObjects[x, y] != null)
+            {
+                if (fullReveal)
+                {
+                    fogObjects[x, y].SetActive(false);
+                }
+                else
+                {
+                    // Partially transparent for scouted cells
+                    var renderer = fogObjects[x, y].GetComponent<Renderer>();
+                    if (renderer != null)
+                    {
+                        Color c = renderer.material.color;
+                        c.a = 0.4f;
+                        renderer.material.color = c;
+                    }
+                }
+            }
 
-            // Spawn content visuals for fully revealed cells
+            // Tint the cell tile based on revealed content
+            if (fullReveal && cellObjects[x, y] != null)
+            {
+                var cellRenderer = cellObjects[x, y].GetComponent<Renderer>();
+                if (cellRenderer != null)
+                {
+                    CellState state = grid[x, y].HiddenState;
+                    Color tint;
+                    switch (state)
+                    {
+                        case CellState.Empty:
+                            tint = new Color(0.6f, 0.8f, 0.6f); // slight green (safe)
+                            break;
+                        case CellState.Enemy:
+                            tint = new Color(0.85f, 0.6f, 0.6f); // slight red
+                            break;
+                        case CellState.Trap:
+                            tint = new Color(0.85f, 0.75f, 0.55f); // slight orange
+                            break;
+                        case CellState.Resource:
+                            tint = new Color(0.6f, 0.7f, 0.85f); // slight blue
+                            break;
+                        default:
+                            tint = Color.white;
+                            break;
+                    }
+                    cellRenderer.material.color = tint;
+                }
+            }
+
+            // Spawn content visuals for revealed cells
             if (fullReveal)
             {
                 SpawnContentVisual(x, y);
@@ -331,15 +412,26 @@ namespace VeilOfUncertainty
             {
                 case CellState.Enemy:
                     if (enemyPrefab != null)
-                        Instantiate(enemyPrefab, position, Quaternion.identity, transform);
+                    {
+                        var obj = Instantiate(enemyPrefab, position, Quaternion.identity, transform);
+                        obj.SetActive(true);
+                    }
                     break;
                 case CellState.Trap:
                     if (trapPrefab != null)
-                        Instantiate(trapPrefab, position, Quaternion.identity, transform);
+                    {
+                        var obj = Instantiate(trapPrefab, position,
+                            Quaternion.identity, transform);
+                        obj.SetActive(true);
+                        obj.transform.position = new Vector3(x * 2f, 0.15f, y * 2f);
+                    }
                     break;
                 case CellState.Resource:
                     if (resourcePrefab != null)
-                        Instantiate(resourcePrefab, position, Quaternion.identity, transform);
+                    {
+                        var obj = Instantiate(resourcePrefab, position, Quaternion.identity, transform);
+                        obj.SetActive(true);
+                    }
                     break;
             }
         }

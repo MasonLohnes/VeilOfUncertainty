@@ -31,6 +31,20 @@ namespace VeilOfUncertainty
         private bool isInitialized;
 
         /// <summary>
+        /// Sets panel references programmatically (called by SceneBuilder).
+        /// </summary>
+        public void SetPanels(DecisionNetworkPanel dnPanel, VPIPanel vPanel,
+                              BeliefStatePanel bsPanel, HUDManager hud,
+                              FogOfWarRenderer fogRenderer)
+        {
+            decisionNetworkPanel = dnPanel;
+            vpiPanel = vPanel;
+            beliefStatePanel = bsPanel;
+            hudManager = hud;
+            fogOfWarRenderer = fogRenderer;
+        }
+
+        /// <summary>
         /// Initializes all UI panels with references to the game systems.
         /// </summary>
         public void Initialize(AIAdvisor advisor, GridWorld world, GameConfig gameConfig)
@@ -140,6 +154,15 @@ namespace VeilOfUncertainty
         {
             if (hudManager != null)
                 hudManager.SetStatus(message);
+        }
+
+        /// <summary>
+        /// Triggers a red damage flash on the HUD.
+        /// </summary>
+        public void TriggerDamageFlash()
+        {
+            if (hudManager != null)
+                hudManager.TriggerDamageFlash();
         }
     }
 }

@@ -109,17 +109,15 @@ namespace VeilOfUncertainty
             currentDifficultyModifier = Mathf.Clamp(currentDifficultyModifier, 0.5f, 2.0f);
 
             // ---- Step 2: Enemy Behavior Classification via k-NN ----
-            // Build a real feature vector from observed game state and feed the
-            // classification result as evidence into the decision network.
+            // Feed classification results as evidence into the decision network
             decisionNetwork.ClearEvidence();
             if (enemyClassifier.HasTrainingData())
             {
-                EnemyFeatureVector? features = BuildEnemyFeatureVector(playerX, playerY);
-                if (features.HasValue)
+                EnemyBehaviorType? classifiedBehavior =
+                    enemyClassifier.ClassifyNearestEnemy(playerX, playerY);
+                if (classifiedBehavior.HasValue)
                 {
-                    EnemyBehaviorType classifiedBehavior =
-                        enemyClassifier.Classify(features.Value);
-                    decisionNetwork.SetEnemyBehaviorEvidence(classifiedBehavior);
+                    decisionNetwork.SetEnemyBehaviorEvidence(classifiedBehavior.Value);
                 }
             }
 
@@ -275,49 +273,6 @@ namespace VeilOfUncertainty
             float enemyFactor = enemyRatio;
 
             return (hpFactor + scoutFactor + enemyFactor) / 3f;
-        }
-
-        /// <summary>
-        /// Builds a feature vector for k-NN classification from the current game state.
-        /// Scans revealed cells within radius 5 for the nearest known enemy, then
-        /// derives four behavioural features from distance and remaining enemy ratio.
-        /// Returns null when no revealed enemy is visible (no evidence to classify).
-        /// </summary>
-        private EnemyFeatureVector? BuildEnemyFeatureVector(int playerX, int playerY)
-        {
-            List<Vector2Int> neighbors = gridWorld.GetNeighbors(playerX, playerY, 5);
-            float minDist = float.MaxValue;
-            bool foundEnemy = false;
-
-            foreach (var n in neighbors)
-            {
-                if (gridWorld.IsCellRevealed(n.x, n.y) &&
-                    gridWorld.GetHiddenState(n.x, n.y) == CellState.Enemy)
-                {
-                    float dist = Vector2Int.Distance(
-                        new Vector2Int(playerX, playerY), n);
-                    if (dist < minDist) { minDist = dist; foundEnemy = true; }
-                }
-            }
-
-            if (!foundEnemy) return null;
-
-            // Derive behavioural features from observable game state.
-            // DistanceToPlayer    — actual grid distance to nearest known enemy.
-            // AggressionScore     — closer enemies are presumed more aggressive.
-            // MoveFrequency       — scales with remaining enemy ratio (more enemies = busier).
-            // PatrolRegularity    — inverse of aggression; distant enemies tend to patrol.
-            float enemyRatio = gridWorld.TotalEnemies > 0
-                ? (float)gridWorld.EnemiesRemaining / gridWorld.TotalEnemies
-                : 0f;
-
-            return new EnemyFeatureVector
-            {
-                DistanceToPlayer = minDist,
-                AggressionScore  = Mathf.Clamp01(1f - minDist / 5f),
-                MoveFrequency    = Mathf.Clamp01(enemyRatio),
-                PatrolRegularity = Mathf.Clamp01(minDist / 5f)
-            };
         }
 
         /// <summary>

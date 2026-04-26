@@ -58,6 +58,7 @@ namespace VeilOfUncertainty
         /// <summary>
         /// Creates fog overlay objects and probability label texts for all cells.
         /// Uses TextMesh (3D text) for world-space probability labels.
+        /// Uses Standard shader with transparent mode for proper 3D rendering.
         /// </summary>
         private void CreateOverlays()
         {
@@ -80,10 +81,9 @@ namespace VeilOfUncertainty
                     var collider = fogQuad.GetComponent<Collider>();
                     if (collider != null) Destroy(collider);
 
-                    // Apply fog material
+                    // Apply fog material using Standard shader in transparent mode
                     var renderer = fogQuad.GetComponent<Renderer>();
-                    renderer.material = new Material(Shader.Find("Sprites/Default"));
-                    renderer.material.color = fogColor;
+                    renderer.material = RuntimePrefabFactory.CreateTransparentMaterial(fogColor);
                     renderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
                     renderer.receiveShadows = false;
 
